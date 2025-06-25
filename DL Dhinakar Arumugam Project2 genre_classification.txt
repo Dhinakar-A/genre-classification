@@ -1,0 +1,75 @@
+
+import os
+import numpy as np
+import librosa
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+
+# Parameters
+DATA_PATH = "audio_dataset"
+SAMPLES_PER_TRACK = 22050 * 30  # 30 seconds
+
+def extract_features(file_path, n_mfcc=40, max_len=130):
+    try:
+        audio, sr = librosa.load(file_path, sr=22050)
+        mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
+        if mfcc.shape[1] < max_len:
+            pad_width = max_len - mfcc.shape[1]
+            mfcc = np.pad(mfcc, pad_width=((0, 0), (0, pad_width)), mode='constant')
+        else:
+            mfcc = mfcc[:, :max_len]
+        return mfcc
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return None
+
+# Load dataset
+features = []
+labels = []
+
+for genre in os.listdir(DATA_PATH):
+    genre_path = os.path.join(DATA_PATH, genre)
+    if os.path.isdir(genre_path):
+        for file in os.listdir(genre_path):
+            if file.endswith(".wav"):
+                file_path = os.path.join(genre_path, file)
+                mfcc = extract_features(file_path)
+                if mfcc is not None:
+                    features.append(mfcc)
+                    labels.append(genre)
+
+# Convert to numpy arrays
+X = np.array(features)
+X = X[..., np.newaxis]  # Add channel dimension
+le = LabelEncoder()
+y = to_categorical(le.fit_transform(labels))
+
+# Train/validation split
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Build CNN model
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=X_train.shape[1:]),
+    MaxPooling2D((2, 2)),
+    Dropout(0.3),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Dropout(0.3),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.3),
+    Dense(y.shape[1], activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Train model
+model.fit(X_train, y_train, epochs=30, batch_size=32, validation_data=(X_val, y_val))
+
+# Evaluate model
+val_loss, val_acc = model.evaluate(X_val, y_val)
+print(f"Validation Accuracy: {val_acc:.2f}")
